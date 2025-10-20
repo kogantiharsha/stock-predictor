@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AlphaInvest AI: Stock Analyzer</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Use Inter font -->
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f7f9fb;
+        }
+        .report-section h3 {
+            border-left: 4px solid #3b82f6; /* Blue border */
+            padding-left: 0.75rem;
+            margin-top: 1.5rem;
+            margin-bottom: 0.5rem;
+            font-size: 1.25rem;
+            font-weight: 600;
+        }
+        .recommendation {
+            font-weight: 700;
+            font-size: 1.5rem;
+            padding: 0.5rem 1rem;
+            border-radius: 9999px;
+            display: inline-block;
+        }
+    </style>
+</head>
+<body class="min-h-screen">
+
+    <!-- Global variables stub (Mandatory for compliance, though unused for this specific task) -->
+    <script>
+        const __app_id = 'alpha-invest-ai';
+        const __firebase_config = '{}';
+        const __initial_auth_token = '';
+        const apiKey = ""; // API key is handled by the canvas environment
+    </script>
+    
+    <div id="app" class="max-w-4xl mx-auto p-4 md:p-8">
+
+        <!-- Header -->
+        <header class="text-center mb-8">
+            <h1 class="text-4xl font-extrabold text-gray-900">
+                <span class="text-blue-600">AlphaInvest</span> AI
+            </h1>
+            <p class="text-gray-500 mt-2">Comprehensive Stock Analysis powered by Gemini & Google Search.</p>
+        </header>
+
+        <!-- Search Input Card -->
+        <div class="bg-white p-6 shadow-xl rounded-xl mb-8 border border-gray-100">
+            <h2 class="text-xl font-semibold text-gray-700 mb-4">Analyze a Stock</h2>
+            <div class="flex flex-col sm:flex-row gap-4">
+                <input
+                    type="text"
+                    id="stockTicker"
+                    placeholder="Enter Stock Ticker (e.g., AAPL, TSLA)"
+                    class="flex-grow p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-lg uppercase"
+                    onkeydown="if(event.key === 'Enter') analyzeStock()"
+                />
+                <button
+                    id="analyzeButton"
+                    onclick="analyzeStock()"
+                    class="bg-blue-600 text-white p-3 rounded-lg font-bold text-lg hover:bg-blue-700 transition duration-150 shadow-md flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                    Analyze
+                </button>
+            </div>
+            <p id="error-message" class="text-red-500 mt-2 text-sm hidden"></p>
+        </div>
+
+        <!-- Loading and Results Area -->
+        <div id="resultsContainer">
+            <!-- Initial state message -->
+            <div id="initial-message" class="text-center p-10 bg-white rounded-xl shadow-lg border border-gray-100">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-12 h-12 mx-auto text-blue-400 mb-3">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" />
+                </svg>
+                <p class="text-gray-600">Enter a stock ticker above to generate a professional investment report.</p>
+            </div>
+
+            <!-- Loading Spinner -->
+            <div id="loading" class="hidden text-center p-10 bg-white rounded-xl shadow-lg border border-gray-100">
+                <svg class="animate-spin h-8 w-8 text-blue-600 mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <p class="mt-4 text-gray-600 font-medium">Analyzing real-time financial data...</p>
+                <p class="text-sm text-gray-500">This may take a moment to fetch and synthesize the report.</p>
+            </div>
+
+            <!-- Analysis Report -->
+            <div id="reportPanel" class="hidden bg-white p-6 md:p-8 shadow-2xl rounded-xl border border-gray-100">
+                <!-- Report content will be injected here -->
+            </div>
+        </div>
+        
+    </div>
+
+    <script>
+        const stockTickerInput = document.getElementById('stockTicker');
+        const analyzeButton = document.getElementById('analyzeButton');
+        const loadingDiv = document.getElementById('loading');
+        const initialMessageDiv = document.getElementById('initial-message');
+        const reportPanel = document.getElementById('reportPanel');
+        const errorMessageDiv = document.getElementById('error-message');
+        
+        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+
+        // --- Utility Functions ---
+
+        // Exponential backoff retry mechanism for API calls
+        async function fetchWithRetry(url, options, maxRetries = 5) {
+            for (let i = 0; i < maxRetries; i++) {
+                try {
+                    const response = await fetch(url, options);
+                    if (response.status !== 429) { // Not a rate limit error
+                        return response;
+                    }
+                    // Handle rate limiting (429 Too Many Requests)
+                    const delay = Math.pow(2, i) * 1000 + Math.random() * 1000;
+                    console.warn(`Rate limit hit. Retrying in ${Math.round(delay / 1000)}s...`);
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                } catch (error) {
+                    if (i === maxRetries - 1) throw error;
+                    const delay = Math.pow(2, i) * 1000 + Math.random() * 1000;
+                    console.error(`Fetch failed. Retrying in ${Math.round(delay / 1000)}s...`, error);
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                }
+            }
+            throw new Error("API call failed after multiple retries.");
+        }
+
+        // --- Core Analysis Logic ---
+
+        function setUIState(state) {
+            errorMessageDiv.classList.add('hidden');
+            analyzeButton.disabled = state === 'loading';
+            analyzeButton.textContent = state === 'loading' ? 'Analyzing...' : 'Analyze';
+            loadingDiv.classList.toggle('hidden', state !== 'loading');
+            initialMessageDiv.classList.toggle('hidden', state !== 'initial' && state !== 'error');
+            reportPanel.classList.toggle('hidden', state !== 'loaded');
+        }
+
+        function displayError(message) {
+            setUIState('error');
+            initialMessageDiv.classList.remove('hidden'); // Show initial message fallback
+            errorMessageDiv.textContent = message;
+            errorMessageDiv.classList.remove('hidden');
+        }
+
+        function formatRecommendation(text) {
+            const match = text.match(/\b(BUY|HOLD|SELL)\b/i);
+            const recommendation = match ? match[0].toUpperCase() : 'N/A';
+            let colorClass = 'bg-gray-200 text-gray-800'; // Default
+            
+            if (recommendation === 'BUY') {
+                colorClass = 'bg-green-100 text-green-700';
+            } else if (recommendation === 'SELL') {
+                colorClass = 'bg-red-100 text-red-700';
+            } else if (recommendation === 'HOLD') {
+                colorClass = 'bg-yellow-100 text-yellow-700';
+            }
+
+            return `
+                <div class="flex items-center justify-between border-b pb-4 mb-4">
+                    <h2 class="text-2xl font-bold text-gray-800">Overall Recommendation</h2>
+                    <span class="recommendation ${colorClass}">${recommendation}</span>
+                </div>
+            `;
+        }
+
+        function formatReport(markdownText, sources) {
+            // 1. Get Recommendation and remove it from the main text for prominent display
+            const recommendationHtml = formatRecommendation(markdownText);
+            
+            // 2. Simple markdown to HTML conversion for readability (headers, lists, bold)
+            let htmlContent = markdownText
+                .replace(/^### (.*)$/gm, '<div class="report-section"><h3>$1</h3>') // Custom Section Header
+                .replace(/^## (.*)$/gm, '<h2>$1</h2>')
+                .replace(/^\* (.*)$/gm, '<li class="ml-5 list-disc text-gray-700">$1</li>') // List items
+                .replace(/^(?!<h|<ul|<li|<div)(.*)$/gm, '<p class="mb-3 text-gray-700">$1</p>') // Paragraphs (exclude lines already processed)
+                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>') // Bold text
+                .replace(/\n\n/g, '<br><br>'); // Double newline to line break
+
+            // Ensure lists are wrapped
+            htmlContent = htmlContent.replace(/<li>.*<\/li>/gs, (match) => `<ul>${match}</ul>`);
+
+            // 3. Add Sources
+            let sourcesHtml = '';
+            if (sources && sources.length > 0) {
+                sourcesHtml = `
+                    <div class="mt-8 pt-4 border-t border-gray-200">
+                        <h4 class="text-sm font-semibold text-gray-600 mb-2">Sources (Grounding Data):</h4>
+                        <ul class="space-y-1 text-xs text-gray-500">
+                            ${sources.map((source, index) => `
+                                <li>
+                                    ${index + 1}. 
+                                    <a href="${source.uri}" target="_blank" class="hover:underline text-blue-600">${source.title || source.uri}</a>
+                                </li>
+                            `).join('')}
+                        </ul>
+                    </div>
+                `;
+            }
+
+            return recommendationHtml + '<div class="mt-6">' + htmlContent + '</div>' + sourcesHtml;
+        }
+
+        // --- Main Function ---
+
+        async function analyzeStock() {
+            const ticker = stockTickerInput.value.trim().toUpperCase();
+            if (!ticker) {
+                displayError("Please enter a valid stock ticker symbol.");
+                return;
+            }
+
+            setUIState('loading');
+            reportPanel.innerHTML = ''; // Clear previous report
+
+            const userQuery = `Analyze the stock ${ticker} using the latest available financial data and market information.`;
+
+            // Professional financial analyst persona and structured report request
+            const systemPrompt = `You are 'AlphaInvest AI', a world-class, professional financial analyst. Your task is to perform a comprehensive, actionable investment report on the requested stock using the latest available market data found via Google Search.
+
+The analysis MUST be highly detailed, objective, and divided into the following three main sections using Markdown Level 3 headers (e.g., ### Fundamental Analysis):
+1.  **Fundamental Analysis**: Cover metrics like EPS, P/E Ratio, Revenue Growth, Balance Sheet Health, and Competitive Moat.
+2.  **Technical Analysis**: Discuss key price levels, short/medium-term trends, moving averages, and technical indicators (e.g., RSI, MACD).
+3.  **Beyond Analysis: Market and Economic Factors**: Discuss relevant sector trends, current interest rate environment, inflation, and major macroeconomic or geopolitical risks affecting the stock.
+
+The report MUST conclude with a **clear, single-word overall recommendation** (BUY, HOLD, or SELL) and specific short-term (3-6 month) and medium-term (12-18 month) target price ranges based on your comprehensive findings. Use bullet points for readability throughout the sections.
+
+Format the final recommendation clearly at the beginning of the summary. Example Recommendation format: 'OVERALL RECOMMENDATION: BUY. Target Price Range...'`;
+
+            const payload = {
+                contents: [{ parts: [{ text: userQuery }] }],
+                tools: [{ "google_search": {} }],
+                systemInstruction: {
+                    parts: [{ text: systemPrompt }]
+                },
+                // Add a low temperature for factual, deterministic analysis
+                config: {
+                    temperature: 0.2
+                }
+            };
+
+            try {
+                const response = await fetchWithRetry(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                
+                const result = await response.json();
+                const candidate = result.candidates?.[0];
+
+                if (!candidate || !candidate.content?.parts?.[0]?.text) {
+                    throw new Error("Analysis failed: The AI did not return a valid response.");
+                }
+
+                const text = candidate.content.parts[0].text;
+                let sources = [];
+
+                // Extract grounding sources
+                const groundingMetadata = candidate.groundingMetadata;
+                if (groundingMetadata && groundingMetadata.groundingAttributions) {
+                    sources = groundingMetadata.groundingAttributions
+                        .map(attribution => ({
+                            uri: attribution.web?.uri,
+                            title: attribution.web?.title,
+                        }))
+                        .filter(source => source.uri);
+                }
+
+                // Format and display the report
+                const htmlReport = formatReport(text, sources);
+                reportPanel.innerHTML = htmlReport;
+                setUIState('loaded');
+
+            } catch (error) {
+                console.error("Stock Analysis Error:", error);
+                displayError("Could not complete the analysis. Please check the ticker symbol or try again later.");
+                setUIState('error');
+            }
+        }
+
+        // Initialize UI State
+        window.onload = () => {
+            setUIState('initial');
+        };
+
+    </script>
+</body>
+</html>
